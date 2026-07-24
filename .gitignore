@@ -10,6 +10,3 @@ __pycache__/
 data/
 artifacts/
 results_eval/
-
-# local symlink to the ubench checkout holding collected runs
-ubench
