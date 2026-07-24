@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# gnnid data + artifacts (regenerated from runs)
+data/
+artifacts/
+results_eval/
+
+# local symlink to the ubench checkout holding collected runs
+ubench

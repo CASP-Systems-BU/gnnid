@@ -1,0 +1,70 @@
+# Single config that drives the whole gnnid pipeline.
+# Override any key on the CLI: gnnid train --set train.lr=5e-4
+
+seed: 17
+
+data:
+  runs_glob: "ubench/results/*/"
+  benchmarks: [boutique]        # per-benchmark model in v1
+  parquet_dir: "data/parquet"
+  sentences_dir: "data/sentences"
+  val_frac: 0.2                 # temporal split BY RUN (never random)
+  test_frac: 0.2
+
+windows:
+  width_s: 30
+  stride_s: 15
+  min_tail_s: 15                # keep a trailing partial window if >= this
+
+events:
+  # L4 flow selection: Hubble emits many observations per connection; keep
+  # only informative ones (rule of the prior approved plan).
+  l4_keep: [non_forwarded, syn_no_ack, udp_first]
+  drop_control_plane_audit: true   # audit events not attributable to a pod
+
+sentences:
+  max_tokens: 256
+  max_repeats_per_signature: 3  # FLASH-style identical-event dedup (first/mid/last)
+  neighbor_identity: none       # none | service (ablation only; none avoids 2-hop label leakage)
+  strip_verdict_tokens: false   # eval flips this to test weak-signal honesty
+
+w2v:
+  dim: 64
+  sg: 1                         # skip-gram, better on small corpora
+  window: 5
+  negative: 10
+  min_count: 2
+  epochs: 15
+  workers: 4
+
+graph:
+  include_workload_nodes: false
+  reverse_edges: true
+  dedup_key: [src, dst, event_type]
+
+model:
+  objective: flash_cls          # flash_cls | masked_recon (future config swap)
+  hidden: 128
+  embed: 64
+  dropout: 0.25
+  conv: sage
+
+train:
+  lr: 1.0e-3
+  weight_decay: 5.0e-4
+  max_epochs: 200
+  patience: 20
+  batch_windows: 8
+  xgb:
+    n_estimators: 300
+    max_depth: 6
+    learning_rate: 0.1
+    early_stopping_rounds: 20
+
+scoring:
+  source: xgb                   # xgb | gnn | w2v (ablation switch)
+  score: one_minus_p_true
+  threshold_q: 0.995            # benign-val quantile per node type
+  agg: [max, top3_mean]         # per-pod aggregation across windows
+
+artifacts_dir: "artifacts/default"
