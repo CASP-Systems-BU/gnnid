@@ -122,6 +122,14 @@ class EventView:
     k8s_subresource: str | None = None
     k8s_user_type: str | None = None
     k8s_status_code: int | None = None
+    # behavior metrics (used by PPT features, not by sentence tokens)
+    grpc_status: int | None = None
+    duration_ms: float | None = None
+    request_bytes: int | None = None
+    response_bytes: int | None = None
+    reporter_views: int | None = None
+    drop_reason: str | None = None
+    is_reply: bool | None = None
 
 
 _VERDICT_TOK = {"FORWARDED": "forwarded", "DROPPED": "dropped",
@@ -191,7 +199,11 @@ def _view_from_row(row, perspective: str) -> EventView:
         dns_qtypes=g("dns_qtypes"), dns_query=g("dns_query"),
         dns_rcode=g("dns_rcode"), k8s_verb=g("k8s_verb"),
         k8s_resource=g("k8s_resource"), k8s_subresource=g("k8s_subresource"),
-        k8s_user_type=g("k8s_user_type"), k8s_status_code=g("k8s_status_code"))
+        k8s_user_type=g("k8s_user_type"), k8s_status_code=g("k8s_status_code"),
+        grpc_status=g("grpc_status"), duration_ms=g("duration_ms"),
+        request_bytes=g("request_bytes"), response_bytes=g("response_bytes"),
+        reporter_views=g("reporter_views"), drop_reason=g("drop_reason"),
+        is_reply=g("is_reply"))
 
 
 def _dedup_and_cap(items: list, max_repeats: int, max_tokens: int) -> list[str]:
