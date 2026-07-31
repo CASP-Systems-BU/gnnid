@@ -129,16 +129,15 @@ def _write_jsonl(path: Path, rows):
     path.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
 
 
-@pytest.fixture
-def run_dir(tmp_path) -> Path:
-    d = tmp_path / "boutique-mix_20260722-064121"
+def make_run_dir(base: Path, run_ts: str = "20260722-064121") -> Path:
+    d = base / f"boutique-mix_{run_ts}"
     (d / "istio" / "access_logs").mkdir(parents=True)
     (d / "cilium").mkdir(parents=True)
     (d / "audit").mkdir(parents=True)
     (d / "k8s_snapshot").mkdir(parents=True)
     (d / "meta.json").write_text(json.dumps({
         "benchmark": "boutique", "request": "mix", "threads": 4,
-        "connections": 16, "duration_s": 30, "run_id": "20260722-064121",
+        "connections": 16, "duration_s": 30, "run_id": run_ts,
         "start_epoch": 1784702584, "end_epoch": 1784702614,
         "start_iso": "2026-07-22T06:43:04Z", "istio_enabled": True,
         "cilium_enabled": True, "audit_enabled": True, "run_status": 0}))
@@ -150,6 +149,31 @@ def run_dir(tmp_path) -> Path:
     _write_jsonl(d / "cilium" / "flows.jsonl", _FLOWS)
     _write_jsonl(d / "audit" / "audit.jsonl", _AUDIT)
     return d
+
+
+@pytest.fixture
+def run_dir(tmp_path) -> Path:
+    return make_run_dir(tmp_path)
+
+
+@pytest.fixture
+def parquet_runs(tmp_path, cfg) -> tuple[Path, list[str]]:
+    """Three synthetic runs with distinct timestamps, ingested to parquet —
+    temporal_split yields 1 train / 1 val / 1 test."""
+    from gnnid.ingest.run_dir import ingest_run
+    parquet_dir = tmp_path / "parquet"
+    run_ids = []
+    for ts in ("20260722-064121", "20260722-064500", "20260722-064900"):
+        rd = make_run_dir(tmp_path, ts)
+        events_df, entities_df, meta = ingest_run(rd, cfg)
+        run_id = f"{meta['benchmark']}-{meta['request']}_{meta['run_id']}"
+        out = parquet_dir / run_id
+        out.mkdir(parents=True)
+        events_df.to_parquet(out / "events.parquet", index=False)
+        entities_df.to_parquet(out / "entities.parquet", index=False)
+        (out / "meta.json").write_text(json.dumps(meta))
+        run_ids.append(run_id)
+    return parquet_dir, run_ids
 
 
 @pytest.fixture
