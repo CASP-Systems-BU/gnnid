@@ -11,6 +11,8 @@ def _add_common(p):
     p.add_argument("--config", default="configs/default.yaml")
     p.add_argument("--set", dest="overrides", action="append", default=[],
                    metavar="key=value", help="dotted config override")
+    p.add_argument("--detector", default=None, metavar="name",
+                   help="detector to run (flash | ppt); sugar for --set detector=name")
     p.add_argument("--repo-root", default=".")
 
 
@@ -24,7 +26,11 @@ def main(argv=None) -> int:
         _add_common(sp)
 
     args = ap.parse_args(argv)
-    cfg = load_config(args.config, args.overrides)
+    overrides = list(args.overrides)
+    if getattr(args, "detector", None):
+        # sugar for --set detector=...; prepend so an explicit --set wins
+        overrides.insert(0, f"detector={args.detector}")
+    cfg = load_config(args.config, overrides)
 
     if args.cmd == "ingest":
         from .ingest.run_dir import ingest_all
