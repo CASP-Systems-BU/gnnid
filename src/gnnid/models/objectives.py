@@ -1,6 +1,8 @@
 """Objective seam — the config swap point for future detectors.
 
 `flash_cls` (v1): weighted CE role classification; anomaly = 1 - p(true label).
+`ppt_cls`: the same semantics over a HeteroData batch's entity nodes,
+restricted to the newest window's copies (score_mask).
 `masked_recon` (future GraphMAE/MAGIC): registered stub, not implemented.
 """
 from __future__ import annotations
@@ -42,7 +44,31 @@ class FlashClassification:
         return scores
 
 
-_REGISTRY = {"flash_cls": FlashClassification}
+class PPTClassification(FlashClassification):
+    """FlashClassification over a HeteroData batch's entity nodes; loss is
+    restricted to the newest window's copies (score_mask) so each entity-
+    window is supervised exactly once across the run's memory graphs."""
+
+    def loss(self, logits, batch) -> torch.Tensor:
+        ent = batch["entity"]
+        mask = (ent.y != self.other_idx) & ent.score_mask
+        if mask.sum() == 0:
+            return logits.sum() * 0.0
+        return F.cross_entropy(logits[mask], ent.y[mask],
+                               weight=self.class_weights)
+
+    def node_scores(self, logits, batch) -> torch.Tensor:
+        """1 - p(true label) per entity copy; OTHER -> 1.0. Callers select
+        the score_mask rows."""
+        p = F.softmax(logits, dim=-1)
+        y = batch["entity"].y
+        p_true = p.gather(1, y.clamp(min=0).unsqueeze(1)).squeeze(1)
+        scores = 1.0 - p_true
+        return torch.where(y == self.other_idx,
+                           torch.ones_like(scores), scores)
+
+
+_REGISTRY = {"flash_cls": FlashClassification, "ppt_cls": PPTClassification}
 
 
 def build_objective(name: str, **kw) -> Objective:
