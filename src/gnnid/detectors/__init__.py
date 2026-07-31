@@ -45,4 +45,4 @@ def load_detector(cfg: Config, repo_root: str | Path = ".") -> Detector:
     return get_detector(tag).load(path, cfg)
 
 
-from . import flash  # noqa: E402,F401  (imports register the detectors)
+from . import flash, ppt  # noqa: E402,F401  (imports register the detectors)

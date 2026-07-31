@@ -54,3 +54,37 @@ def test_train_score_eval_e2e(parquet_runs, cfg, tmp_path):
     for section in report["perturbations"].values():
         assert {"auc", "detection_rate", "runs"} <= set(section)
     assert set(report["ablation"]) == {"w2v", "gnn", "xgb"}
+
+
+def test_train_score_eval_e2e_ppt(parquet_runs, cfg, tmp_path):
+    parquet_dir, run_ids = parquet_runs
+    cfg.dotted_set("detector", "ppt")
+    for k, v in [("detectors.ppt.train.pretrain.epochs", 2),
+                 ("detectors.ppt.train.pretrain.patience", 1),
+                 ("detectors.ppt.train.finetune.max_epochs", 2),
+                 ("detectors.ppt.train.finetune.patience", 1)]:
+        cfg.dotted_set(k, v)
+    cfg.dotted_set("data.parquet_dir", str(parquet_dir))
+
+    trained = run_training(cfg, repo_root=tmp_path)
+    adir = tmp_path / "artifacts" / "ppt"          # ppt overlay dir, no clobber
+    for f in ("label_vocab.json", "feature_spec.json", "ppt.pt",
+              "pretrained.pt", "norm.json", "thresholds.json",
+              "manifest.json", "detector.json"):
+        assert (adir / f).exists(), f
+    assert trained.manifest["splits"]["test"] == run_ids[2:]
+
+    scores = run_scoring(cfg, repo_root=tmp_path)
+    assert not scores.empty
+    assert SCORE_COLUMNS | {"threshold", "is_alert"} <= set(scores.columns)
+    assert scores["score_norm"].between(0, 1).all()
+    results = tmp_path / "results_eval" / "ppt"    # ppt overlay results dir
+    assert (results / "scores.parquet").exists()
+    assert (results / "alerts.json").exists()
+
+    report = run_eval(cfg, repo_root=tmp_path)
+    assert (results / "eval_report.json").exists()
+    assert set(report["weak_signal"]) == {"with_verdict", "strip_verdict"}
+    assert set(report["perturbations"]) == {"rewire", "dns_exfil",
+                                            "sentence_swap", "api_burst"}
+    assert report["ablation"] == {}                # ppt declares no score forks
