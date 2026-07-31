@@ -3,6 +3,8 @@
 
 seed: 17
 
+detector: flash                 # flash | ppt — which Detector implementation runs
+
 data:
   runs_glob: "ubench/results/*/"
   benchmarks: [boutique]        # per-benchmark model in v1
@@ -68,3 +70,42 @@ scoring:
   agg: [max, top3_mean]         # per-pod aggregation across windows
 
 artifacts_dir: "artifacts/default"
+results_dir: "results_eval"     # scores/alerts/eval-report output dir
+
+# Per-detector overlays, deep-merged over the base sections by
+# config.detector_view (dicts merge recursively; scalars and lists replace —
+# a detector overriding a section like `windows` should restate every key it
+# depends on). The base sections above ARE the flash defaults. Detector-scoped
+# CLI overrides go under this prefix: --set detectors.ppt.windows.width_s=10
+detectors:
+  flash: {}
+  ppt:
+    artifacts_dir: "artifacts/ppt"
+    results_dir: "results_eval/ppt"
+    windows: {width_s: 5, stride_s: 5, min_tail_s: 2.5, memory: 5}  # non-overlapping snapshots + window memory (paper: 5s, N=5)
+    graph:
+      flow_memory: 20             # max previous same-src/same-dst temporal edges per event
+      max_events_per_window: 1000 # CPU guard; non-FORWARDED L4 events always kept
+    features:
+      time_enc_dim: 16            # sinusoidal order-in-window / window-age encoding
+      path_vocab: 64              # top-K templated RPC paths (OOV -> index 0)
+      dns_vocab: 32               # top-K external eTLD+1
+      api_resource_vocab: 32      # top-K k8s resources
+    model: {objective: ppt_cls, hidden: 128, layers: 2, dropout: 0.2}
+    train:
+      pretrain:                   # stage 1: self-supervised link prediction
+        enabled: true
+        lr: 1.0e-4
+        epochs: 40
+        patience: 8
+        neg_ratio: 1.0            # negatives per positive supervision edge
+        holdout_frac: 0.3         # supervision split (rest are message edges)
+        max_pos_per_type: 2000
+        batch_graphs: 4
+      finetune:                   # stage 2: role classification
+        lr: 1.0e-2
+        weight_decay: 5.0e-4
+        max_epochs: 100
+        patience: 15
+        batch_graphs: 4
+      scratch_lr: 1.0e-3          # finetune lr when pretrain.enabled=false

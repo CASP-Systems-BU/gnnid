@@ -56,3 +56,24 @@ def load_config(path: str | Path, overrides: list[str] | None = None) -> Config:
 
 def deep_copy(cfg: Config) -> Config:
     return Config(copy.deepcopy(dict(cfg)))
+
+
+def _deep_merge(base: dict, overlay: dict) -> None:
+    """Recursive dict merge, overlay wins. Dicts merge key-by-key; scalars and
+    lists REPLACE (a detector overriding a list must restate it whole)."""
+    for k, v in overlay.items():
+        if isinstance(v, dict) and isinstance(base.get(k), dict):
+            _deep_merge(base[k], v)
+        else:
+            base[k] = copy.deepcopy(v)
+
+
+def detector_view(cfg: Config) -> Config:
+    """Per-detector merged config: `detectors.<cfg.detector>` overlaid on a
+    deep copy of the base. The base sections ARE the flash defaults, so
+    flash's overlay is empty and its view equals the base config."""
+    view = deep_copy(cfg)
+    name = cfg.dotted_get("detector", "flash")
+    overlay = cfg.dotted_get(f"detectors.{name}") or {}
+    _deep_merge(view, overlay)
+    return view
