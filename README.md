@@ -47,7 +47,9 @@ There is no labelled attack data, so `gnnid eval` reports proxies:
 
 ## Data collection
 
-ubench deploys the benchmarks on a live cluster and collects the telemetry — `./bootstrap.sh addons` enables the audit-log and Istio gates, then `deploy.sh --run` runs a workload and writes a run directory. It is vendored as a submodule at [ubench/](ubench/), pinned to `main` (`b0b1f54`).
+ubench deploys the benchmarks on a live cluster and collects the telemetry. Experiments are defined as reusable specs (`ubench/experiments/*.yaml`: benchmark, worker count, per-service replicas, offered request rate, total duration, segment length) and run with one command — `deploy.sh --experiment <spec> --run`. The load generator is wrk2 (open-loop, fixed `-R` rate); a long experiment is **one continuous run harvested into time-segment run directories**, so each run dir here is a contiguous slice of the same load and the temporal train/val/test split doubles as a within-experiment time split. Cluster setup: `register_cluster.py <hostnames>` after instantiating on CloudLab, then `./bootstrap.sh`; `./bootstrap.sh addons` enables the audit-log and Istio gates. See [ubench/scripts/cloudlab/README.md](ubench/scripts/cloudlab/README.md) and [ubench/experiments/README.md](ubench/experiments/README.md). ubench is vendored as a submodule at [ubench/](ubench/).
+
+Runs collected with the old closed-loop `wrk` generator (`meta.json` has no `generator` key) and new wrk2 runs (`"generator": "wrk2"`) come from different load regimes — don't mix them in one trained model; retrain on a consistent set.
 
 ## Extending
 

@@ -114,7 +114,12 @@ class EntityResolver:
                 owner = self._rs_owner.get(ref.get("name", ""), ref.get("name"))
                 break
             labels = meta.get("labels", {}) or {}
+            # The app label before the owner chain: per-replica pinned
+            # Deployments (ubench render_manifests.py) are named frontend-1,
+            # frontend-2, ... but their pods all carry app=frontend — the role
+            # is the service, not the replica slot.
             canonical = (labels.get("service.istio.io/canonical-name")
+                         or labels.get("app")
                          or (owner and strip_pod_hash(owner))
                          or strip_pod_hash(name))
             spec, status = it.get("spec", {}), it.get("status", {})
