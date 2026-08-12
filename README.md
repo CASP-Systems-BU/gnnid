@@ -4,6 +4,8 @@ GNN-based intrusion detection for Kubernetes. It ingests telemetry collected fro
 
 Flow: ubench runs → parquet → per-window graphs → detector → per-pod scores and alerts.
 
+The data specification lives in [DATA.md](DATA.md), including what each run directory contains and which source file every metric comes from
+
 Two detectors are implemented behind a shared pipeline (`detector:` in the config):
 
 - **flash** (default) — the FLASH design (Word2Vec-encoded event sentences feeding a GraphSAGE classifier + XGBoost), moved from host provenance graphs to cluster telemetry.
@@ -47,7 +49,28 @@ There is no labelled attack data, so `gnnid eval` reports proxies:
 
 ## Data collection
 
-ubench deploys the benchmarks on a live cluster and collects the telemetry. Experiments are defined as reusable specs (`ubench/experiments/*.yaml`: benchmark, worker count, per-service replicas, offered request rate, total duration, segment length) and run with one command — `deploy.sh --experiment <spec> --run`. The load generator is wrk2 (open-loop, fixed `-R` rate); a long experiment is **one continuous run harvested into time-segment run directories**, so each run dir here is a contiguous slice of the same load and the temporal train/val/test split doubles as a within-experiment time split. Cluster setup: `register_cluster.py <hostnames>` after instantiating on CloudLab, then `./bootstrap.sh`; `./bootstrap.sh addons` enables the audit-log and Istio gates. See [ubench/scripts/cloudlab/README.md](ubench/scripts/cloudlab/README.md) and [ubench/experiments/README.md](ubench/experiments/README.md). ubench is vendored as a submodule at [ubench/](ubench/).
+ubench deploys the benchmarks on a live cluster and collects the telemetry. An experiment is a reusable YAML spec in `ubench/experiments/`:
+
+```yaml
+benchmark: boutique          # k8s/<benchmark>/ in ubench
+request: mix                 # request mix (client/lua/<request>.lua)
+workers: 4                   # placement spans this many worker nodes
+replicas: {default: 1, overrides: {frontend: 2}}   # per-service pod counts
+load: {threads: 4, conns: 16, rate: 1000}          # wrk2; rate = offered req/s
+total_duration_s: 3600       # one continuous load...
+segment_s: 600               # ...harvested into one run dir per segment
+```
+
+and runs with one command (env vars override spec values, e.g. `RATE=500`):
+
+```bash
+cd ubench/scripts/cloudlab
+python3 register_cluster.py <node-0 hostname> <node-1> ...   # once per cluster
+./bootstrap.sh                                               # once per cluster
+./deploy.sh --experiment ../../experiments/boutique-mix.yaml --run
+```
+
+The load generator is wrk2 (open-loop, fixed `-R` rate); a long experiment is **one continuous run harvested into time-segment run directories**, so each run dir here is a contiguous slice of the same load and the temporal train/val/test split doubles as a within-experiment time split. Segments land in `ubench/results/` ready for `gnnid ingest`. Full spec schema and knee-sweep guidance: [ubench/experiments/README.md](ubench/experiments/README.md); cluster/bootstrap details: [ubench/scripts/cloudlab/README.md](ubench/scripts/cloudlab/README.md). ubench is vendored as a submodule at [ubench/](ubench/).
 
 Runs collected with the old closed-loop `wrk` generator (`meta.json` has no `generator` key) and new wrk2 runs (`"generator": "wrk2"`) come from different load regimes — don't mix them in one trained model; retrain on a consistent set.
 
