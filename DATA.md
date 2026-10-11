@@ -71,7 +71,7 @@ each `event_type` fills only its own payload columns (the rest stay null).
 | `src_id`, `src_type` | Canonical source entity (see §3 for the ID grammar) and its type |
 | `dst_id`, `dst_type` | Canonical destination entity: the most specific endpoint known (server pod if resolvable) |
 | `dst_svc_id` | RPC only: the Service in front of `dst` (the graph also adds a src→Service edge); null otherwise |
-| `label`, `label_source` | Reserved for attack ground truth (filled by `ingest --labels`); null on benign runs |
+| `label`, `label_source` | Attack ground truth, filled by `ingest --labels` from `<run>/attack/attack.json`: `malicious`/`benign` on attack runs (`label_source` ∈ `attacker-src`/`attacker-dst`/`attacker-both`), **null on benign runs** (no ground truth). See §Attack labeling below |
 
 ### RPC_CALL: from `istio/access_logs/<pod>.log` (Envoy, L7)
 
@@ -231,5 +231,28 @@ A pod is judged by what it *does*; `canonical_service` is what the model must
   events between them are the edges/features.
 - Both detectors (`flash`, `ppt`) train **only on benign runs** to predict
   each node's role (`canonical_service`); at scoring time, a pod whose
-  behavior no longer matches its role scores high. The `label` columns stay
-  null until attack traffic with ground truth exists.
+  behavior no longer matches its role scores high.
+
+## Attack labeling (supervised ground truth)
+
+Attack runs are produced by ubench's red-team harness
+([`ubench/REDTEAM.md`](ubench/REDTEAM.md)): an LLM agent acts from a foothold pod,
+and the harness drops a ground-truth file into the run dir:
+
+```
+<run_dir>/attack/attack.json   # {is_attack, attacker_namespace, attacker_ips,
+                               #  attacker_sa, session_start_epoch/end_epoch, ...}
+```
+
+- `gnnid ingest --labels` reads it and stamps every event `benign`/`malicious`
+  (`src/gnnid/ingest/labeler.py`): malicious iff an endpoint entity is the attacker
+  pod (resolved by IP/namespace) within the session window. Benign runs have no
+  `attack.json`, so their `label` columns stay null.
+- A run carrying `attack.json` is marked `meta.is_attack`, which
+  `dataset.split_runs` uses to **hold attack runs out of benign train/val** and
+  force them into **test** (`data.attack_runs_in_test`), preserving the
+  benign-only training contract.
+- `gnnid eval` then adds a `labeled_detection` block: real ROC-AUC / PR-AUC /
+  precision-recall of attacker-touched node-windows vs benign, reported for
+  `all_nodes` and `known_role_nodes` (the latter excludes the `<other>`-class
+  attacker pod itself, whose role-mismatch score is 1.0 by construction).

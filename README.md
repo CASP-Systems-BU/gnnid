@@ -40,12 +40,19 @@ Input runs come from `ingest.runs_glob`, by default `ubench/results/*/` — the 
 
 ## Evaluation
 
-There is no labelled attack data, so `gnnid eval` reports proxies:
+On benign-only data `gnnid eval` reports proxies:
 
 - false-positive rate on held-out benign runs
 - ROC-AUC on a weak signal — pod-windows containing Hubble `DROPPED`/`POLICY_DENIED` flows should score higher
 - detection of four synthetic perturbations of benign events: `rewire`, `dns_exfil`, `sentence_swap`, `api_burst`
 - ablations: Word2Vec only, GNN only, and the two concatenated
+
+When labelled attack runs are present (collected by ubench's LLM red-team harness, see
+[ubench/REDTEAM.md](ubench/REDTEAM.md)), ingest them with `gnnid ingest --labels` and `gnnid eval`
+adds a `labeled_detection` block: real ROC-AUC / PR-AUC / precision-recall of attacker-touched
+node-windows vs benign (reported for `all_nodes` and, excluding the trivially-anomalous `<other>`
+attacker pod, `known_role_nodes`). Attack runs are automatically held out of benign training and
+scored only at test time. See [DATA.md](DATA.md#attack-labeling-supervised-ground-truth).
 
 ## Data collection
 
