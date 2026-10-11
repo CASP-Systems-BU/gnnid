@@ -17,6 +17,7 @@ import pandas as pd
 from . import dataset
 from .config import Config, deep_copy, detector_view
 from .detectors import Detector, load_detector
+from .labels import OTHER
 from .schema import L4_FLOW, POD
 
 
@@ -134,6 +135,99 @@ def ablation(det: Detector, parquet_dir, cfg: Config, test_ids) -> dict:
     return out
 
 
+def _malicious_node_windows(parquet_dir, run_id: str, cfg: Config):
+    """(w_idx, entity_id) with >=1 incident malicious event -> the attack-touched
+    node-windows of a labeled run. None if the run carries no labels."""
+    rd = dataset.load_run(parquet_dir, run_id)
+    if "label" not in rd.events.columns or rd.events["label"].isna().all():
+        return None
+    mal = rd.events[rd.events["label"] == "malicious"]
+    touched = set()
+    if mal.empty:
+        return touched
+    for win in dataset.run_windows(rd, cfg):
+        d = mal[(mal.ts >= win.t0) & (mal.ts < win.t1)]
+        for eid in set(d["src_id"]) | set(d["dst_id"]):
+            touched.add((win.w_idx, eid))
+    return touched
+
+
+def _prf(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
+    tp = int(((y_true == 1) & (y_pred == 1)).sum())
+    fp = int(((y_true == 0) & (y_pred == 1)).sum())
+    fn = int(((y_true == 1) & (y_pred == 0)).sum())
+    prec = tp / (tp + fp) if (tp + fp) else float("nan")
+    rec = tp / (tp + fn) if (tp + fn) else float("nan")
+    f1 = (2 * prec * rec / (prec + rec)
+          if prec and rec and not (np.isnan(prec) or np.isnan(rec)) else float("nan"))
+    return {"precision": prec, "recall": rec, "f1": f1, "tp": tp, "fp": fp, "fn": fn}
+
+
+def _ap(pos: np.ndarray, neg: np.ndarray) -> float:
+    """Average precision (PR-AUC) from positive/negative score arrays."""
+    if len(pos) == 0 or len(neg) == 0:
+        return float("nan")
+    try:
+        from sklearn.metrics import average_precision_score
+    except Exception:
+        return float("nan")
+    y = np.concatenate([np.ones(len(pos)), np.zeros(len(neg))])
+    s = np.concatenate([pos, neg])
+    return float(average_precision_score(y, s))
+
+
+def labeled_detection(det: Detector, parquet_dir, run_ids, cfg: Config) -> dict:
+    """Real supervised detection metrics on labeled attack runs.
+
+    Node-window truth = any incident malicious event. Reported for two
+    populations: `all_nodes`, and `known_role_nodes` (excludes the <other> class,
+    i.e. the attacker pod and infra — whose role-mismatch score is 1.0 by
+    construction and would trivially inflate the numbers). `attacker_nodes` is the
+    sanity recall on the attacker's own <other> node-windows."""
+    from .score import apply_thresholds
+    pops = {"all_nodes": [], "known_role_nodes": []}  # lists of (score, y, is_alert)
+    atk_n = atk_alert = 0
+    scored_runs = []
+    for run_id in run_ids:
+        touched = _malicious_node_windows(parquet_dir, run_id, cfg)
+        if touched is None:
+            continue
+        df = apply_thresholds(det.score_run(parquet_dir, run_id, cfg), det.thresholds)
+        if df.empty:
+            continue
+        scored_runs.append(run_id)
+        for r in df.itertuples(index=False):
+            y = 1 if (r.w_idx, r.entity_id) in touched else 0
+            row = (float(r.score_norm), y, bool(r.is_alert))
+            pops["all_nodes"].append(row)
+            if r.true_label != OTHER:
+                pops["known_role_nodes"].append(row)
+            elif y:  # attacker/other, positive -> sanity recall
+                atk_n += 1
+                atk_alert += int(r.is_alert)
+
+    out = {"runs": scored_runs}
+    for name, rows in pops.items():
+        if not rows:
+            out[name] = {"n_pos": 0, "n_neg": 0}
+            continue
+        s = np.array([r[0] for r in rows])
+        y = np.array([r[1] for r in rows])
+        a = np.array([r[2] for r in rows], dtype=int)
+        pos, neg = s[y == 1], s[y == 0]
+        out[name] = {
+            "roc_auc": _auc(pos, neg),
+            "pr_auc": _ap(pos, neg),
+            "n_pos": int((y == 1).sum()),
+            "n_neg": int((y == 0).sum()),
+            **_prf(y, a),
+        }
+    out["attacker_nodes"] = {
+        "n_windows": atk_n,
+        "alert_recall": (atk_alert / atk_n) if atk_n else float("nan")}
+    return out
+
+
 def run_eval(cfg: Config, repo_root: str | Path = ".") -> dict:
     from .score import apply_thresholds
     dcfg = detector_view(cfg)
@@ -143,18 +237,27 @@ def run_eval(cfg: Config, repo_root: str | Path = ".") -> dict:
     test_ids = splits.get("test") or dataset.list_run_ids(parquet_dir,
                                                           dcfg.data.benchmarks)
 
+    # Benign proxies run over benign test runs only; labeled detection runs over
+    # the attack runs (held in test by dataset.split_runs).
+    attack_ids = [r for r in test_ids if dataset.is_attack_run(parquet_dir, r)]
+    benign_ids = [r for r in test_ids if r not in attack_ids] or test_ids
+
     frames = [apply_thresholds(det.score_run(parquet_dir, r, dcfg),
-                               det.thresholds) for r in test_ids]
+                               det.thresholds) for r in benign_ids]
     scores = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
     report = {
         "test_runs": test_ids,
+        "attack_runs": attack_ids,
         "benign_fp": benign_fp(scores),
-        "weak_signal": weak_signal(det, parquet_dir, test_ids, dcfg),
-        "perturbations": perturbation_eval(det, parquet_dir, test_ids, dcfg,
+        "weak_signal": weak_signal(det, parquet_dir, benign_ids, dcfg),
+        "perturbations": perturbation_eval(det, parquet_dir, benign_ids, dcfg,
                                            int(dcfg.dotted_get("seed", 17))),
-        "ablation": ablation(det, parquet_dir, dcfg, test_ids),
+        "ablation": ablation(det, parquet_dir, dcfg, benign_ids),
     }
+    if attack_ids:
+        report["labeled_detection"] = labeled_detection(
+            det, parquet_dir, attack_ids, dcfg)
     out = Path(repo_root) / str(dcfg.dotted_get("results_dir", "results_eval"))
     out.mkdir(parents=True, exist_ok=True)
     with open(out / "eval_report.json", "w") as f:
