@@ -12,6 +12,7 @@ data:
   sentences_dir: "data/sentences"
   val_frac: 0.2                 # temporal split BY RUN (never random)
   test_frac: 0.2
+  attack_runs_in_test: true     # hold is_attack runs out of benign train/val, force into test
 
 windows:
   width_s: 30

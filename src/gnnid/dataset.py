@@ -63,6 +63,32 @@ def temporal_split(run_ids: list[str], val_frac: float, test_frac: float
         run_ids[n_train + n_val:]
 
 
+def is_attack_run(parquet_dir: str | Path, run_id: str) -> bool:
+    """True if the ingested run carries attack ground truth (meta.is_attack)."""
+    try:
+        with open(Path(parquet_dir) / run_id / "meta.json") as f:
+            return bool(json.load(f).get("is_attack", False))
+    except (OSError, ValueError):
+        return False
+
+
+def split_runs(parquet_dir: str | Path, run_ids: list[str], cfg: Config
+               ) -> tuple[list[str], list[str], list[str]]:
+    """Temporal split that never trains on attacks.
+
+    Attack runs (meta.is_attack) are held out of the benign train/val/test split
+    and appended to TEST when data.attack_runs_in_test (default true), so the
+    benign-only training contract is preserved and the labeled detection eval has
+    attack runs to score. With the flag false, attack runs are dropped entirely."""
+    attack_ids = [r for r in run_ids if is_attack_run(parquet_dir, r)]
+    benign_ids = [r for r in run_ids if r not in attack_ids]
+    tr, va, te = temporal_split(benign_ids, float(cfg.data.val_frac),
+                                float(cfg.data.test_frac))
+    if bool(cfg.dotted_get("data.attack_runs_in_test", True)):
+        te = te + attack_ids
+    return tr, va, te
+
+
 def entity_meta_map(entities: pd.DataFrame) -> dict:
     return {row.entity_id: (row.entity_type, row.canonical_service, row.namespace)
             for row in entities.itertuples(index=False)}

@@ -26,8 +26,7 @@ def run_training(cfg: Config, repo_root: str | Path = ".") -> Detector:
     run_ids = dataset.list_run_ids(parquet_dir, dcfg.data.benchmarks)
     if not run_ids:
         raise SystemExit(f"no ingested runs under {parquet_dir}; run `gnnid ingest` first")
-    train_ids, val_ids, test_ids = dataset.temporal_split(
-        run_ids, float(dcfg.data.val_frac), float(dcfg.data.test_frac))
+    train_ids, val_ids, test_ids = dataset.split_runs(parquet_dir, run_ids, dcfg)
     name = dcfg.dotted_get("detector", "flash")
     print(f"[train] detector={name} windows={dict(dcfg.windows)}")
     print(f"[train] runs: {len(train_ids)} train / {len(val_ids)} val / "
