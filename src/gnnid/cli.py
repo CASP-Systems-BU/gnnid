@@ -24,6 +24,10 @@ def main(argv=None) -> int:
     for name in ("ingest", "train", "score", "eval"):
         sp = sub.add_parser(name)
         _add_common(sp)
+        if name == "ingest":
+            sp.add_argument("--labels", action="store_true",
+                            help="stamp attack runs' events benign/malicious from "
+                                 "each run's attack/attack.json ground truth")
 
     args = ap.parse_args(argv)
     overrides = list(args.overrides)
@@ -34,7 +38,7 @@ def main(argv=None) -> int:
 
     if args.cmd == "ingest":
         from .ingest.run_dir import ingest_all
-        ids = ingest_all(cfg, args.repo_root)
+        ids = ingest_all(cfg, args.repo_root, apply_labels=getattr(args, "labels", False))
         print(f"[ingest] {len(ids)} runs -> {cfg.data.parquet_dir}")
     elif args.cmd == "train":
         from .train import run_training

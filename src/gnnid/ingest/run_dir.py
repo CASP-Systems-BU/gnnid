@@ -19,6 +19,7 @@ from ..resolve import EntityResolver
 from ..schema import entities_to_frame, events_to_frame
 from . import audit as audit_mod
 from . import envoy, hubble
+from . import labeler as labeler_mod
 
 
 def load_meta(run_dir: Path) -> dict:
@@ -27,8 +28,14 @@ def load_meta(run_dir: Path) -> dict:
 
 
 def ingest_run(run_dir: str | Path, cfg: Config,
-               namespace: str = "default") -> tuple[pd.DataFrame, pd.DataFrame, dict]:
-    """One run dir -> (events_df, entities_df, meta)."""
+               namespace: str = "default",
+               apply_labels: bool = False) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+    """One run dir -> (events_df, entities_df, meta).
+
+    If the run carries attack ground truth (`attack/attack.json`), meta is marked
+    `is_attack` (so the split keeps it out of benign training); when apply_labels
+    is set, every event is additionally stamped benign/malicious from it.
+    """
     run_dir = Path(run_dir)
     meta = load_meta(run_dir)
     run_id = f"{meta['benchmark']}-{meta['request']}_{meta['run_id']}"
@@ -72,12 +79,23 @@ def ingest_run(run_dir: str | Path, cfg: Config,
 
     events_df = events_to_frame(events)
     entities_df = entities_to_frame(list(resolver.entities.values()))
+
+    # Attack ground truth (if present): mark the run and optionally label events.
+    attack = labeler_mod.load_attack(run_dir)
+    if attack is not None:
+        meta["is_attack"] = True
+        if apply_labels:
+            meta["labels_summary"] = labeler_mod.apply_labels(
+                events_df, entities_df, attack)
+
     return events_df, entities_df, meta
 
 
-def ingest_all(cfg: Config, repo_root: str | Path = ".") -> list[str]:
+def ingest_all(cfg: Config, repo_root: str | Path = ".",
+               apply_labels: bool = False) -> list[str]:
     """Ingest every matching run dir -> data/parquet/<run_id>/{events,entities}.parquet.
-    Returns the ingested run_ids (sorted by run timestamp = temporal order)."""
+    Returns the ingested run_ids (sorted by run timestamp = temporal order).
+    apply_labels stamps attack runs' events benign/malicious from attack.json."""
     repo_root = Path(repo_root)
     out_root = repo_root / cfg.data.parquet_dir
     benchmarks = set(cfg.data.benchmarks or [])
@@ -91,7 +109,8 @@ def ingest_all(cfg: Config, repo_root: str | Path = ".") -> list[str]:
         if meta.get("run_status", 1) != 0:
             print(f"[ingest] skip {run_dir.name}: run_status != 0")
             continue
-        events_df, entities_df, meta = ingest_run(run_dir, cfg)
+        events_df, entities_df, meta = ingest_run(run_dir, cfg,
+                                                  apply_labels=apply_labels)
         run_id = f"{meta['benchmark']}-{meta['request']}_{meta['run_id']}"
         out = out_root / run_id
         out.mkdir(parents=True, exist_ok=True)
@@ -100,6 +119,9 @@ def ingest_all(cfg: Config, repo_root: str | Path = ".") -> list[str]:
         with open(out / "meta.json", "w") as f:
             json.dump(meta, f, indent=2)
         run_ids.append(run_id)
+        lbl = meta.get("labels_summary")
+        extra = (f", {lbl['malicious']} malicious" if lbl else
+                 (" [attack, unlabeled]" if meta.get("is_attack") else ""))
         print(f"[ingest] {run_id}: {len(events_df)} events, "
-              f"{len(entities_df)} entities")
+              f"{len(entities_df)} entities{extra}")
     return sorted(run_ids, key=lambda r: r.rsplit("_", 1)[-1])
