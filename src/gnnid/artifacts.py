@@ -29,10 +29,19 @@ def make_manifest(cfg: Config, splits: dict) -> dict:
 def fit_norm_thresholds(scores_by_type: dict[str, list[float]],
                         threshold_q: float) -> tuple[dict, dict]:
     """Benign-val raw scores per node type -> (quantile-norm tables,
-    per-type alert thresholds at the given quantile)."""
+    per-type alert thresholds).
+
+    Thresholds live in NORMALIZED (quantile-rank) space — the same space as
+    score_norm (see `normalize`) — because scoring alerts via
+    `score_norm >= threshold` (score.apply_thresholds). The alert cut is the
+    quantile level itself: a node fires when its benign-val rank exceeds
+    threshold_q (e.g. the top 0.5% for its type at q=0.995). Storing the raw
+    score quantile value here instead mixes units (rank vs raw) and destroys
+    calibration — it drove ~100% benign alert rates on narrow-support types and
+    0% on pods.
+    """
     norm = quantile_norm_tables(scores_by_type)
-    thresholds = {t: float(np.quantile(arr, threshold_q))
-                  for t, arr in scores_by_type.items() if arr}
+    thresholds = {t: float(threshold_q) for t in norm}
     return norm, thresholds
 
 
