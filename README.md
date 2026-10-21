@@ -81,6 +81,8 @@ The load generator is wrk2 (open-loop, fixed `-R` rate); a long experiment is **
 
 Runs collected with the old closed-loop `wrk` generator (`meta.json` has no `generator` key) and new wrk2 runs (`"generator": "wrk2"`) come from different load regimes — don't mix them in one trained model; retrain on a consistent set.
 
+**Agentic workload.** The boutique `recommendations` service can run as an LLM agent (variable, content-dependent fan-out; optional external LLM egress) via the `boutique-agentic` experiment — see [ubench/docs/AGENTIC.md](ubench/docs/AGENTIC.md) and the agentic-role notes in [DATA.md](DATA.md#agentic-workloads-recommendations). Ingest/train/score/eval are unchanged.
+
 ## Extending
 
 Ingest, windowing, temporal splits, role labels, quantile normalization, per-pod aggregation, and the whole eval harness are shared infrastructure. A detector is one class implementing the `Detector` interface ([src/gnnid/detectors/base.py](src/gnnid/detectors/base.py)) — it owns its graph construction, training procedure (any number of stages), artifact bundle, and scoring — registered in [src/gnnid/detectors/](src/gnnid/detectors/) and selected by the `detector:` config key with a `detectors.<name>` config overlay. The parametrized acceptance test in [tests/test_detector_contract.py](tests/test_detector_contract.py) defines what a new detector must satisfy; `flash` and `ppt` are the two references.

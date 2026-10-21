@@ -256,3 +256,32 @@ and the harness drops a ground-truth file into the run dir:
   precision-recall of attacker-touched node-windows vs benign, reported for
   `all_nodes` and `known_role_nodes` (the latter excludes the `<other>`-class
   attacker pod itself, whose role-mismatch score is 1.0 by construction).
+
+---
+
+## Agentic workloads (recommendations)
+
+ubench's boutique `recommendations` service can run as an **LLM agent** (see
+[ubench/docs/AGENTIC.md](ubench/docs/AGENTIC.md)): a bounded tool-calling loop
+whose downstream calls are chosen at run time rather than hard-coded. Collect it
+with the `boutique-agentic` experiment; ingest/train/score/eval are unchanged.
+
+What this changes in the tables (no schema or code change needed):
+
+- **Same role, variable fan-out.** `recommendations` keeps its `canonical_service`
+  role, but instead of one fixed call it now issues a data-dependent number and
+  mix of `RPC_CALL`s to `productcatalog` / `cart` / `currency`. The role's benign
+  behavior distribution becomes **multimodal/wider**. A benign-only,
+  role-mismatch detector may read this legitimate variability as mild anomaly, so
+  expect a higher baseline role-prediction error for this role — worth watching in
+  `gnnid eval`. (Also note `recommendations` was previously *never exercised* by
+  the default `mix`, so agentic runs are the first telemetry this role produces.)
+- **External egress (llm backend only).** With `AGENT_MODE=llm`, each sampled call
+  adds a `recommendations → ext:world` **L4_FLOW** edge to the model host. A
+  `dns:<model-host>` node (`DNS_QUERY`) appears only if Hubble L7 DNS visibility is
+  enabled — it is off by default (see the DNS_QUERY note above), so the default
+  signal is the `ext:world` L4 edge. The stub backend stays fully in-cluster.
+
+The agent is driven through a dedicated frontend passthrough (`/ro_recommend`);
+the standard `mix` and all existing roles are unchanged, so agentic runs are
+comparable to historical benign runs except for the new `recommendations` activity.
